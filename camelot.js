@@ -23,8 +23,6 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
   const collateral1 = await camelotPool.token1()
   const collateral0Contract = getContract(collateral0, ERC20.abi)
   const collateral1Contract = getContract(collateral1, ERC20.abi)
-
-
   const response = await fetch('https://api.camelot.exchange/nitros')
   const res = await response.json()
   const tvlUSD = parseFloat(res.data.nitros[nitroPoolAddress]?.tvlUSD || 0)
@@ -55,6 +53,9 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
 
   // Calculate the user's share of each collateral token
   const userCollateralBalances = collateralTokens.map(token => {
+    console.log(token.nitroPoolBalance, 'token.nitroPoolBalance')
+    console.log(token.poolBalance, 'token.poolBalance')
+    console.log(userPoolPercentage, 'userPoolPercentage')
     const totalBalance = token.nitroPoolBalance + token.poolBalance;
     const userShare = userPoolPercentage * totalBalance;
     return {
