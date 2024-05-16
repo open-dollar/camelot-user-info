@@ -43,7 +43,7 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
       address: collateral1,
     }
   ]
-    
+
   const userInfo = await camelotNitroPool.userInfo(userAddress)
   const userDepositAmount = fromBigNumber(userInfo.totalDepositAmount)
   const totalDepositAmount = fromBigNumber(await camelotNitroPool.totalDepositAmount())
@@ -52,18 +52,18 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
   const userDollarValue = (userPoolPercentage / 100) * tvlUSD;
 
   console.log(
-    collateralTokens, 
+    collateralTokens,
     userInfo,
     userDepositAmount,
     totalDepositAmount,
     userPoolPercentage,
     userDollarValue,
-    tvlUSD
+    tvlUSD,
     `User has ${userPoolPercentage}% of the pool, which is worth $${userDollarValue}`
   )
 
   return {
-    collateralTokens, 
+    collateralTokens,
     userInfo,
     userDepositAmount,
     totalDepositAmount,
@@ -72,4 +72,5 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
   }
 }
 
+// poolAddress, nitroPoolAddress, userAddress
 fetchUserPoolDetails('0x824959a55907d5350e73e151Ff48DabC5A37a657', '0x53F973256F410d1D8b10ce72D03D8dBBD3b1066E', '0xb919e09bb077013d5f93c898dafcc1d0c75559fe')
