@@ -23,9 +23,11 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
   const collateral1 = await camelotPool.token1()
   const collateral0Contract = getContract(collateral0, ERC20.abi)
   const collateral1Contract = getContract(collateral1, ERC20.abi)
+
+
   const response = await fetch('https://api.camelot.exchange/nitros')
   const res = await response.json()
-  const tvlUSD = res.data.nitros[nitroPoolAddress] ?? 0
+  const tvlUSD = parseFloat(res.data.nitros[nitroPoolAddress]?.tvlUSD || 0)
 
   const collateralTokens = [
     {
@@ -43,32 +45,44 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
       address: collateral1,
     }
   ]
-    
-  const userInfo = await camelotNitroPool.userInfo(userAddress)
-  const userDepositAmount = fromBigNumber(userInfo.totalDepositAmount)
-  const totalDepositAmount = fromBigNumber(await camelotNitroPool.totalDepositAmount())
-  // What percentage of the pool does the user own?
-  const userPoolPercentage = userDepositAmount / totalDepositAmount * 100
-  const userDollarValue = (userPoolPercentage / 100) * tvlUSD;
 
-  console.log(
-    collateralTokens, 
-    userInfo,
-    userDepositAmount,
-    totalDepositAmount,
-    userPoolPercentage,
-    userDollarValue,
-    tvlUSD
-    `User has ${userPoolPercentage}% of the pool, which is worth $${userDollarValue}`
-  )
+  const userInfo = await camelotNitroPool.userInfo(userAddress);
+  const userDepositAmount = fromBigNumber(userInfo.totalDepositAmount);
+  const totalDepositAmount = fromBigNumber(await camelotNitroPool.totalDepositAmount());
+
+  // Calculate the user's percentage of the pool
+  const userPoolPercentage = userDepositAmount / totalDepositAmount;
+
+  // Calculate the user's share of each collateral token
+  const userCollateralBalances = collateralTokens.map(token => {
+    const totalBalance = token.nitroPoolBalance + token.poolBalance;
+    const userShare = userPoolPercentage * totalBalance;
+    return {
+      symbol: token.symbol,
+      userShare: userShare
+    };
+  });
+
+  // Calculate the dollar value of the user's share of the pool
+  const userDollarValue = userPoolPercentage * tvlUSD;
+
+  console.log('Collateral Tokens:', collateralTokens);
+  console.log('User Info:', userInfo);
+  console.log('User Deposit Amount:', userDepositAmount);
+  console.log('Total Deposit Amount:', totalDepositAmount);
+  console.log('User Pool Percentage:', (userPoolPercentage * 100).toFixed(2) + '%');
+  console.log('User Dollar Value:', '$' + userDollarValue.toFixed(2));
+  console.log('TVL USD:', '$' + tvlUSD.toFixed(2));
+  console.log('User Collateral Balances:', userCollateralBalances);
 
   return {
     collateralTokens, 
     userInfo,
     userDepositAmount,
     totalDepositAmount,
-    userPoolPercentage,
+    userPoolPercentage: userPoolPercentage * 100,
     userDollarValue,
+    userCollateralBalances
   }
 }
 
