@@ -2,12 +2,13 @@ const { ethers } = require('ethers');
 const { formatUnits } = require('ethers/lib/utils');
 const CamelotNitroPool = require('./abis/CamelotNitroPool.json');
 const CamelotPool = require('./abis/CamelotPool.json');
+const AlgebraPositions = require('./abis/AlgebraPositions.json');
 const ERC20 = require('./abis/ERC20.json');
 const SpNFT = require('./abis/SpNFT.json');
 const LpToken = require('./abis/LpToken.json');
 
 const getContract = (address, abi) => {
-  const jsonRpcProvider = new ethers.getDefaultProvider('https://arb1.arbitrum.io/rpc')
+  const jsonRpcProvider = new ethers.getDefaultProvider(process.env.NETWORK_URL || 'https://arb1.arbitrum.io/rpc')
   return new ethers.Contract(address, abi, jsonRpcProvider)
 }
 
@@ -15,28 +16,45 @@ const fromBigNumber = (number, decimals = 18) => {
   return parseFloat(formatUnits(number.toString(), decimals))
 }
 
-const fetchSpNFTBalances = async (spNFTAddress, userAddress, collateral0, collateral1) => {
+const lpBalanceFromSpNFTs = async (userAddress, spNFTAddress, collateral0Address, collateral1Address) => {
   const spNFTContract = getContract(spNFTAddress, SpNFT.abi);
-  const spNFTCount = await spNFTContract.balanceOf(userAddress);
-  let totalODBalance = 0;
-  let totalWETHBalance = 0;
 
-  for (let i = 0; i < spNFTCount; i++) {
-    const tokenId = await spNFTContract.tokenOfOwnerByIndex(userAddress, i);
-    const stakingPosition = await spNFTContract.getStakingPosition(tokenId);
-    const poolInfo = await spNFTContract.getPoolInfo();
-    const lpToken = getContract(poolInfo.lpToken, LpToken.abi);
-    const lpToken0 = await lpToken.token0();
-    const lpToken1 = await lpToken.token1();
-
-    if (lpToken0.toLowerCase() === collateral0.toLowerCase() && lpToken1.toLowerCase() === collateral1.toLowerCase()) {
-      totalODBalance += fromBigNumber(stakingPosition.amount);
-    } else if (lpToken0.toLowerCase() === collateral1.toLowerCase() && lpToken1.toLowerCase() === collateral0.toLowerCase()) {
-      totalWETHBalance += fromBigNumber(stakingPosition.amount);
-    }
+  // Validate LP collateral tokens match expected values
+  const poolInfo = await spNFTContract.getPoolInfo();
+  const lpToken = getContract(poolInfo.lpToken, LpToken.abi);
+  const lpCollateral0Address = await lpToken.token0();
+  const lpCollateral1Address = await lpToken.token1();
+  if (lpCollateral0Address.toLowerCase() !== collateral0Address.toLowerCase() || lpCollateral1Address.toLowerCase() !== collateral1Address.toLowerCase()) {
+    throw 'fetchSpNFTBalances - Invalid LP Token'
   }
 
-  return { totalODBalance, totalWETHBalance };
+  // Get LP Balance for all spNFTs owned by user
+  const spNFTCount = await spNFTContract.balanceOf(userAddress);
+  let lpBalance = 0
+  for (let i = 0; i < spNFTCount; i++) {
+    const tokenId = await spNFTContract.tokenOfOwnerByIndex(userAddress, i);
+
+    const positionDetails = await spNFTContract.getStakingPosition(tokenId);
+    lpBalance += fromBigNumber(positionDetails.amount);
+  }
+  console.log('LP Balance from spNFT:', lpBalance)
+  return lpBalance
+}
+
+const lpBalanceFromAlgebraPositions = async (userAddress, collateral0Address, collateral1Address) => {
+  const CAMELOT_V1_NFT_ADDRESS = "0x00c7f3082833e796A5b3e4Bd59f6642FF44DCD15"
+  const algebraPositionsContract = getContract(CAMELOT_V1_NFT_ADDRESS, AlgebraPositions.abi)
+  const nftCount = await algebraPositionsContract.balanceOf(userAddress);
+  let lpBalance = 0;
+  for (let i = 0; i < nftCount; i++) {
+    const tokenId = await algebraPositionsContract.tokenOfOwnerByIndex(userAddress, i);
+    const positions = await algebraPositionsContract.positions(tokenId);
+    if (positions.token0.toLowerCase() === collateral0Address.toLowerCase() && positions.token1.toLowerCase() === collateral1Address.toLowerCase()) {
+      lpBalance += fromBigNumber(positions.liquidity);
+    }
+  }
+  console.log('LP Balance from Algebra Positions V1:', lpBalance);
+  return lpBalance;
 }
 
 const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) => {
@@ -45,46 +63,46 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
   const camelotPool = getContract(poolAddress, CamelotPool.abi)
 
   // Fetch collateral tokens for pools
-  const collateral0 = await camelotPool.token0()  // OD
-  const collateral1 = await camelotPool.token1()  // WETH
-  const collateral0Contract = getContract(collateral0, ERC20.abi)
-  const collateral1Contract = getContract(collateral1, ERC20.abi)
+  const collateral0Address = await camelotPool.token0()  // OD
+  const collateral1Address = await camelotPool.token1()  // WETH
+  const collateral0 = getContract(collateral0Address, ERC20.abi)
+  const collateral1 = getContract(collateral1Address, ERC20.abi)
 
   // Fetch TVL from Camelot's API
   const response = await fetch('https://api.camelot.exchange/nitros')
   const res = await response.json()
-  const tvlUSD = parseFloat(res.data.nitros[nitroPoolAddress]?.tvlUSD || 0)
 
   // Fetch the user's balance in both tokens including spNFT balances
   const spNFTAddresses = [
-    '0x7647da336cf43f894ac7a0bf87f04806b2e03bb8',  // OD-ETH spNFT
+    '0x7647Da336cF43F894aC7A0bf87f04806b2E03bb8',  // OD-ETH spNFT
   ]
 
-  let totalODBalance = 0;
-  let totalWETHBalance = 0;
+  let lpBalance = 0;
+
+  lpBalance += await lpBalanceFromAlgebraPositions(userAddress, collateral0Address, collateral1Address);
 
   for (const spNFTAddress of spNFTAddresses) {
-    const { totalODBalance: odBalance, totalWETHBalance: wethBalance } = await fetchSpNFTBalances(spNFTAddress, userAddress, collateral0, collateral1);
-    totalODBalance += odBalance;
-    totalWETHBalance += wethBalance;
+    lpBalance += await lpBalanceFromSpNFTs(userAddress, spNFTAddress, collateral0Address, collateral1Address);
   }
 
+  console.log('Total LP Balance:', lpBalance);
+  return
   const collateralTokens = [
     {
-      symbol: await collateral0Contract.symbol(),
-      userBalance: fromBigNumber(await collateral0Contract.balanceOf(userAddress)),
-      nitroPoolBalance: fromBigNumber(await collateral0Contract.balanceOf(nitroPoolAddress)),
-      poolBalance: fromBigNumber(await collateral0Contract.balanceOf(poolAddress)),
-      spNFTBalance: totalODBalance,
-      address: collateral0,
+      symbol: await collateral0.symbol(),
+      address: collateral0Address,
+      spNFTBalance: totalCollateral0Balance,
+      userBalance: fromBigNumber(await collateral0.balanceOf(userAddress)),
+      nitroPoolBalance: fromBigNumber(await collateral0.balanceOf(nitroPoolAddress)),
+      poolBalance: fromBigNumber(await collateral0.balanceOf(poolAddress)),
     },
     {
-      symbol: await collateral1Contract.symbol(),
-      userBalance: fromBigNumber(await collateral1Contract.balanceOf(userAddress)),
-      nitroPoolBalance: fromBigNumber(await collateral1Contract.balanceOf(nitroPoolAddress)),
-      poolBalance: fromBigNumber(await collateral1Contract.balanceOf(poolAddress)),
-      spNFTBalance: totalWETHBalance,
-      address: collateral1,
+      symbol: await collateral1.symbol(),
+      address: collateral1Address,
+      spNFTBalance: totalCollateral1Balance,
+      userBalance: fromBigNumber(await collateral1.balanceOf(userAddress)),
+      nitroPoolBalance: fromBigNumber(await collateral1.balanceOf(nitroPoolAddress)),
+      poolBalance: fromBigNumber(await collateral1.balanceOf(poolAddress)),
     }
   ]
 
@@ -106,26 +124,16 @@ const fetchUserPoolDetails = async (poolAddress, nitroPoolAddress, userAddress) 
   });
 
   // Calculate the dollar value of the user's share of the pool
-  const userDollarValue = userPoolPercentage * tvlUSD;
+  // const userDollarValue = userPoolPercentage * tvlUSD;
 
-  console.log('Collateral Tokens:', collateralTokens);
-  console.log('User Info:', userInfo);
+  console.log('Collateral:', collateralTokens);
+  // console.log('User Info:', userInfo);
   console.log('User Deposit Amount:', userDepositAmount);
   console.log('Total Deposit Amount:', totalDepositAmount);
-  console.log('User Pool Percentage:', (userPoolPercentage * 100).toFixed(2) + '%');
-  console.log('User Dollar Value:', '$' + userDollarValue.toFixed(2));
-  console.log('TVL USD:', '$' + tvlUSD.toFixed(2));
+  // console.log('User Pool Percentage:', (userPoolPercentage * 100).toFixed(2) + '%');
+  // console.log('User Dollar Value:', '$' + userDollarValue.toFixed(2));
+  // console.log('TVL USD:', '$' + tvlUSD.toFixed(2));
   console.log('User Collateral Balances:', userCollateralBalances);
-
-  return {
-    collateralTokens,
-    userInfo,
-    userDepositAmount,
-    totalDepositAmount,
-    userPoolPercentage: userPoolPercentage * 100,
-    userDollarValue,
-    userCollateralBalances
-  }
 }
 
-fetchUserPoolDetails('0x824959a55907d5350e73e151Ff48DabC5A37a657', '0x53F973256F410d1D8b10ce72D03D8dBBD3b1066E', '0x9e07ecD4f5074a2EEAC9C42dF6508e3ec6373EF3')
+fetchUserPoolDetails('0x824959a55907d5350e73e151Ff48DabC5A37a657', '0x53F973256F410d1D8b10ce72D03D8dBBD3b1066E', '0x9492510BbCB93B6992d8b7Bb67888558E12DCac4')
